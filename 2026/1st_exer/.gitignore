@@ -1,0 +1,22 @@
+# Compiled binaries
+maxprod
+maxprod_amgm
+maxprod_cpp
+maxprod_ml
+
+# OCaml build artifacts
+*.cmi
+*.cmx
+*.o
+*.cmo
+*.cma
+*.cmxa
+
+# SML/NJ heap images
+*.amd64-linux
+*.x86-linux
+
+# Local-only data (assignment, test inputs, generated outputs)
+exer26-1.pdf
+maxprod_tests/
+maxprod_outputs_expected/
