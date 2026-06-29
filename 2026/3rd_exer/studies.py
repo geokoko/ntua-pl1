@@ -1,19 +1,11 @@
-# Στρατηγική Σπουδών — minimum number of semesters.
-#
-# Input file:
-#   N M K
-#   M lines: "a b"  (course a is a prerequisite of b, so sem[a] < sem[b])
-#   C
-#   C lines: "x y"  (x and y cannot share a semester)
-#
-# Output: minimum max-semester used, or IMPOSSIBLE if prerequisites are cyclic.
-
+import heapq
 import sys
 
 
 def read_input(path):
-    with open(path) as f:
-        toks = iter(f.read().split())
+
+    src = open(path) if path else sys.stdin
+    toks = iter(src.read().split())
     nxt = lambda: int(next(toks))
 
     n, m, k = nxt(), nxt(), nxt()
@@ -35,18 +27,22 @@ def read_input(path):
     return n, k, pre, succ, indeg, conflict
 
 
-def topo_order(n, succ, indeg):
-    """Kahn's algorithm. Returns a topological order, or None if there's a cycle."""
+def topo_order(n, succ, indeg, cdeg):
+    """Kahn's algorithm, but among the courses that are currently free to place
+    pick the most conflict-constrained one first (MRV-style), so isolated/low-
+    conflict courses are deferred to the end. Returns a topological order, or
+    None if there's a cycle."""
     deg = indeg[:]
-    stack = [v for v in range(1, n + 1) if deg[v] == 0]
+    heap = [(-cdeg[v], v) for v in range(1, n + 1) if deg[v] == 0]
+    heapq.heapify(heap)
     order = []
-    while stack:
-        u = stack.pop()
+    while heap:
+        u = heapq.heappop(heap)[1]
         order.append(u)
         for w in succ[u]:
             deg[w] -= 1
             if deg[w] == 0:
-                stack.append(w)
+                heapq.heappush(heap, (-cdeg[w], w))
     return order if len(order) == n else None
 
 
@@ -56,6 +52,40 @@ def longest_chain(n, pre, order):
     for v in order:                       # prereqs are processed before v
         chain[v] = 1 + max((chain[a] for a in pre[v]), default=0)
     return max(chain[1:], default=0)
+
+
+def bits(mask):
+    """Yield the set bit positions of mask (vertex ids)."""
+    while mask:
+        low = mask & -mask
+        yield low.bit_length() - 1
+        mask ^= low
+
+
+def max_clique(n, conflict):
+    """Largest set of pairwise-conflicting courses — a lower bound on semesters
+    (a clique of size w forces w distinct semesters). Bron-Kerbosch with pivot;
+    n <= 20 so this is microseconds."""
+    adj = [0] * (n + 1)
+    for c in range(1, n + 1):
+        for d in conflict[c]:
+            adj[c] |= 1 << d
+    best = 0
+
+    def expand(size, cand):
+        nonlocal best
+        if cand == 0:
+            best = max(best, size)
+            return
+        if size + cand.bit_count() <= best:                 # can't beat best
+            return
+        pivot = max(bits(cand), key=lambda u: (cand & adj[u]).bit_count())
+        for v in list(bits(cand & ~adj[pivot])):            # only non-neighbours of pivot
+            expand(size + 1, cand & adj[v])
+            cand &= ~(1 << v)
+
+    expand(0, (1 << (n + 1)) - 2)                            # candidate = vertices 1..n
+    return best
 
 
 def feasible(s, n, k, order, pre, conflict):
@@ -70,32 +100,44 @@ def feasible(s, n, k, order, pre, conflict):
     prerequisites already have semesters when you reach it. For each course,
     its semester must be at least max(sem of its prereqs) + 1. Try each legal
     value, track how many courses sit in each semester (the capacity limit),
-    reject a value already used by an *assigned* conflicting course, recurse,
-    and undo (backtrack) on failure.
+    reject a value already used by an *assigned* conflicting course, backtrack
+    on failure
     """
     sem = [0] * (n + 1)        # sem[c] = assigned semester, 0 = unassigned
     count = [0] * (s + 1)      # count[v] = courses currently placed in semester v
 
-    # TODO(human): write the backtracking recursion that fills `sem`.
-    # Suggested shape:
-    #   def assign(i):                      # i = index into `order`
-    #       if i == len(order): return True
-    #       c = order[i]
-    #       lo = max((sem[a] for a in pre[c]), default=0) + 1
-    #       for v in range(lo, s + 1):
-    #           ... check capacity and conflicts, place c, recurse, undo ...
-    #       return False
-    #   return assign(0)
-    raise NotImplementedError("feasible() — your turn")
+    def assign(i):
+        if i == n:
+            return True
+        c = order[i]
+        lo = max((sem[a] for a in pre[c]), default=0) + 1   # strict prereq => +1
+        for v in range(lo, s + 1):
+            if count[v] == k:                               # semester full
+                continue
+            if any(sem[d] == v for d in conflict[c]):        # clashes an assigned course
+                continue
+            sem[c] = v
+            count[v] += 1
+            if assign(i + 1):
+                return True
+            sem[c] = 0                                       # undo (backtrack)
+            count[v] -= 1
+        return False
+
+    return assign(0)
 
 
 def solve(path):
     n, k, pre, succ, indeg, conflict = read_input(path)
-    order = topo_order(n, succ, indeg)
+    if any(c in conflict[c] for c in range(1, n + 1)):   # a course conflicts with itself
+        return "IMPOSSIBLE"
+    cdeg = [len(conflict[c]) for c in range(n + 1)]      # conflict degree per course
+    order = topo_order(n, succ, indeg, cdeg)
     if order is None:
         return "IMPOSSIBLE"
 
-    lo = max(-(-n // k), longest_chain(n, pre, order))   # ceil(n/k) vs longest chain
+    # lower bound: capacity floor, longest prereq chain, largest conflict clique
+    lo = max(-(-n // k), longest_chain(n, pre, order), max_clique(n, conflict))
     for s in range(lo, n + 1):
         if feasible(s, n, k, order, pre, conflict):
             return str(s)
@@ -104,4 +146,4 @@ def solve(path):
 
 if __name__ == "__main__":
     sys.setrecursionlimit(10000)
-    print(solve(sys.argv[1]))
+    print(solve(sys.argv[1] if len(sys.argv) > 1 else None))
